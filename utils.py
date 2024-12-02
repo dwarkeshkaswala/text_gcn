@@ -2,10 +2,11 @@ import numpy as np
 import pickle as pkl
 import networkx as nx
 import scipy.sparse as sp
-from scipy.sparse.linalg.eigen.arpack import eigsh
+from scipy.sparse.linalg import eigsh
 import sys
 import re
-
+import numpy as np
+sys.modules['numpy._core'] = np.core
 
 def parse_index_file(filename):
     """Parse index file."""
@@ -139,11 +140,10 @@ def load_corpus(dataset_str):
     objects = []
     for i in range(len(names)):
         with open("data/ind.{}.{}".format(dataset_str, names[i]), 'rb') as f:
-            if sys.version_info > (3, 0):
-                objects.append(pkl.load(f, encoding='latin1'))
-            else:
-                objects.append(pkl.load(f))
-
+            import sys
+            import numpy as np
+            sys.modules['numpy._core'] = np.core  # Add this line
+            objects.append(pkl.load(f, encoding='latin1'))
     x, y, tx, ty, allx, ally, adj = tuple(objects)
     print(x.shape, y.shape, tx.shape, ty.shape, allx.shape, ally.shape)
 

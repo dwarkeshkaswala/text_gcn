@@ -1,7 +1,7 @@
 from inits import *
 import tensorflow as tf
 
-flags = tf.app.flags
+flags = tf.compat.v1.flags# tf.app.flags
 FLAGS = flags.FLAGS
 
 # global unique layer ID dictionary for layer name assignment
@@ -21,16 +21,16 @@ def get_layer_uid(layer_name=''):
 def sparse_dropout(x, keep_prob, noise_shape):
     """Dropout for sparse tensors."""
     random_tensor = keep_prob
-    random_tensor += tf.random_uniform(noise_shape)
+    random_tensor += tf.compat.v1.random_uniform(noise_shape)
     dropout_mask = tf.cast(tf.floor(random_tensor), dtype=tf.bool)
-    pre_out = tf.sparse_retain(x, dropout_mask)
+    pre_out = tf.compat.v1.sparse_retain(x, dropout_mask)
     return pre_out * (1./keep_prob)
 
 
 def dot(x, y, sparse=False):
     """Wrapper for tf.matmul (sparse vs dense)."""
     if sparse:
-        res = tf.sparse_tensor_dense_matmul(x, y)
+        res = tf.compat.v1.sparse_tensor_dense_matmul(x, y)
     else:
         res = tf.matmul(x, y)
     return res
@@ -101,7 +101,7 @@ class Dense(Layer):
         # helper variable for sparse dropout
         self.num_features_nonzero = placeholders['num_features_nonzero']
 
-        with tf.variable_scope(self.name + '_vars'):
+        with tf.compat.v1.variable_scope(self.name + '_vars'):
             self.vars['weights'] = glorot([input_dim, output_dim],
                                           name='weights')
             if self.bias:
@@ -129,60 +129,66 @@ class Dense(Layer):
         return self.act(output)
 
 
-class GraphConvolution(Layer):
-    """Graph convolution layer."""
-    def __init__(self, input_dim, output_dim, placeholders, dropout=0.,
-                 sparse_inputs=False, act=tf.nn.relu, bias=False,
-                 featureless=False, **kwargs):
+
+class GraphConvolution(tf.keras.layers.Layer):
+    def __init__(self, input_dim, output_dim,
+                 support,
+                 activation=tf.nn.relu,
+                 dropout_rate=0.,
+                 sparse_inputs=False,
+                 featureless=False,
+                 **kwargs):
+        # Extract custom arguments and remove them from kwargs
+        self.logging = kwargs.pop('logging', False)
+        self.featureless = featureless
+        self.sparse_inputs = sparse_inputs
+        self.activation = activation
+        self.dropout_rate = dropout_rate
+        self.support = support  # Save the support (adjacency matrix)
+        self.input_dim = input_dim
+        self.output_dim = output_dim
+
+        # Call the base Layer's __init__ with remaining kwargs
         super(GraphConvolution, self).__init__(**kwargs)
 
-        if dropout:
-            self.dropout = placeholders['dropout']
+    def build(self, input_shape):
+        # Create the variables here
+        if self.featureless:
+            # If featureless, x is not used, and pre_sup is kernel directly
+            num_nodes = self.support.shape[1]
+            self.kernel = self.add_weight(shape=(num_nodes, self.output_dim),
+                                          initializer='glorot_uniform',
+                                          name='kernel')
         else:
-            self.dropout = 0.
+            self.kernel = self.add_weight(shape=(self.input_dim, self.output_dim),
+                                          initializer='glorot_uniform',
+                                          name='kernel')
+        # Initialize bias if needed
+        self.bias = self.add_weight(shape=(self.output_dim,),
+                                    initializer='zeros',
+                                    name='bias')
+        super(GraphConvolution, self).build(input_shape)
 
-        self.act = act
-        self.support = placeholders['support']
-        self.sparse_inputs = sparse_inputs
-        self.featureless = featureless
-        self.bias = bias
+    def call(self, inputs, training=False):
+        if not self.featureless:
+            x = inputs  # Node features
 
-        # helper variable for sparse dropout
-        self.num_features_nonzero = placeholders['num_features_nonzero']
+            if self.sparse_inputs:
+                x = tf.sparse.reorder(x)
+                x = tf.sparse.to_dense(x)
 
-        with tf.variable_scope(self.name + '_vars'):
-            for i in range(len(self.support)):
-                self.vars['weights_' + str(i)] = glorot([input_dim, output_dim],
-                                                        name='weights_' + str(i))
-            if self.bias:
-                self.vars['bias'] = zeros([output_dim], name='bias')
+            if training and self.dropout_rate > 0.0:
+                x = tf.nn.dropout(x, rate=self.dropout_rate)
 
-        if self.logging:
-            self._log_vars()
-
-    def _call(self, inputs):
-        x = inputs
-
-        # dropout
-        if self.sparse_inputs:
-            x = sparse_dropout(x, 1-self.dropout, self.num_features_nonzero)
+            pre_sup = tf.matmul(x, self.kernel)
         else:
-            x = tf.nn.dropout(x, 1-self.dropout)
+            # If featureless, x is not used, and pre_sup is kernel directly
+            pre_sup = self.kernel
 
-        # convolve
-        supports = list()
-        for i in range(len(self.support)):
-            if not self.featureless:
-                pre_sup = dot(x, self.vars['weights_' + str(i)],
-                              sparse=self.sparse_inputs)
-            else:
-                pre_sup = self.vars['weights_' + str(i)]
-            support = dot(self.support[i], pre_sup, sparse=True)
-            supports.append(support)
-        output = tf.add_n(supports)
+        # Multiply with support (adjacency matrix)
+        output = tf.sparse.sparse_dense_matmul(self.support, pre_sup)
 
-        # bias
-        if self.bias:
-            output += self.vars['bias']
-        self.embedding = output #output
-        return self.act(output)
+        if self.bias is not None:
+            output += self.bias
+
+        return self.activation(output)

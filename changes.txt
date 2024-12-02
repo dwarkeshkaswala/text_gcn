@@ -1,0 +1,5 @@
+# Change Log
+
+upgraded to use tensorflow 2.18
+training is working only on CPU as tensorflow > 2.10 does not support GPU
+if downgrade to tensorflow 2.10, the numpy version should be updated to 1.26.x, that numpy is not working with python 3.10
