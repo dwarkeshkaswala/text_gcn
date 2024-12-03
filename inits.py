@@ -1,9 +1,22 @@
+"""
+Weight Initialization Functions
+
+This module provides various initialization strategies for neural network weights:
+- Uniform initialization within a range
+- Glorot/Xavier initialization
+- Zero initialization
+- Ones initialization
+
+These functions are used by the GCN and MLP layers to initialize their weights
+in a way that promotes good training dynamics.
+"""
+
 import numpy as np
 import tensorflow as tf
 
 
 def uniform(shape, scale=0.05, name=None):
-    """Uniform init."""
+    """Uniform initialization within [-scale, scale]."""
     initial = tf.random.uniform(shape, minval=-scale, maxval=scale, dtype=tf.float32)
     return tf.Variable(initial, name=name)
 

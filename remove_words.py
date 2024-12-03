@@ -1,3 +1,17 @@
+"""
+Text Preprocessing Module for Graph Convolutional Networks
+
+This script performs text preprocessing on document datasets:
+- Removes stopwords from documents
+- Handles multiple datasets (20ng, R8, R52, ohsumed, mr)
+- Calculates document statistics (min, max, average lengths)
+- Creates clean versions of the corpus files
+
+Usage:
+    python remove_words.py <dataset>
+where <dataset> is one of: 20ng, R8, R52, ohsumed, mr
+"""
+
 from nltk.corpus import stopwords
 import nltk
 from nltk.wsd import lesk

@@ -1,5 +1,23 @@
-# Change Log
+# Text GCN Implementation Change Log
 
-upgraded to use tensorflow 2.18
-training is working only on CPU as tensorflow > 2.10 does not support GPU
-if downgrade to tensorflow 2.10, the numpy version should be updated to 1.26.x, that numpy is not working with python 3.10
+## Version Updates
+- Upgraded to TensorFlow 2.x compatibility
+- Current version works on CPU (TF > 2.10 lacks GPU support)
+- For GPU support, use TensorFlow 2.10 with numpy 1.26.x
+- Python 3.10 compatibility issues noted with older numpy versions
+
+## Major Changes
+1. Model Architecture
+   - Modernized GCN implementation
+   - Added proper gradient handling
+   - Improved sparse tensor support
+
+2. Training Pipeline
+   - Added early stopping
+   - Improved memory efficiency
+   - Better progress monitoring
+
+3. Data Processing
+   - Enhanced text preprocessing
+   - Improved graph construction
+   - Better handling of large datasets

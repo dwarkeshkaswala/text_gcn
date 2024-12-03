@@ -1,9 +1,29 @@
+"""
+Neural Network Models for Text GCN
+
+This module implements the core model architectures:
+- Base Model: Common functionality for all models
+- MLP (Multi-Layer Perceptron): For baseline comparison
+- GCN (Graph Convolutional Network): Main architecture
+
+Features:
+- TensorFlow 2.x implementation
+- Sparse matrix support
+- Dropout regularization
+- Weight decay
+- Model saving/loading
+- Masked loss and accuracy computation
+"""
+
 import tensorflow as tf
 from layers import GraphConvolution, Dense
 from metrics import masked_softmax_cross_entropy, masked_accuracy
 
 class BaseModel(tf.keras.Model):
+    """Base class with common functionality for all models."""
+    
     def __init__(self, name=None, logging=False, **kwargs):
+        """Initialize base model with logging capability."""
         super(BaseModel, self).__init__(name=name)
         self.logging = logging
 

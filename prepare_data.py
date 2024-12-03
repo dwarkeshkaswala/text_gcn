@@ -1,6 +1,26 @@
 #!/usr/bin/python
 #-*-coding:utf-8-*-
 
+"""
+Dataset Preparation Script
+
+This script prepares raw text datasets for Text GCN processing:
+- Downloads and extracts dataset files
+- Organizes into required directory structure
+- Creates train/test splits
+- Generates necessary metadata files
+
+Supported datasets:
+- 20 Newsgroups (20ng)
+- Reuters R8
+- Reuters R52
+- OHSUMED
+- Movie Reviews (mr)
+
+Usage:
+    python prepare_data.py <dataset>
+"""
+
 dataset_name = 'own'
 sentences = ['Would you like a plain sweater or something else?​', 'Great. We have some very nice wool slacks over here. Would you like to take a look?']
 labels = ['Yes' , 'No' ]

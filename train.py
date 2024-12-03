@@ -1,3 +1,25 @@
+"""
+Training Script for Text GCN
+
+This script handles the complete training pipeline:
+- Data loading and preprocessing
+- Model initialization and training
+- Evaluation on validation and test sets
+- Early stopping
+- Performance metrics calculation
+- Embedding extraction and saving
+
+Features:
+- Command line argument parsing
+- GPU support
+- Multiple model support (GCN, MLP)
+- Comprehensive evaluation metrics
+- Embedding visualization preparation
+
+Usage:
+    python train.py <dataset> [--model gcn|mlp] [--other_args]
+"""
+
 import time
 import tensorflow as tf
 from sklearn import metrics
@@ -9,8 +31,8 @@ import sys
 import numpy as np
 import argparse
 
-# tf.debugging.set_log_device_placement(True)
-# print("Num GPUs Available: ", len(tf.config.list_physical_devices('GPU')))
+tf.debugging.set_log_device_placement(True)
+print("Num GPUs Available: ", len(tf.config.list_physical_devices('GPU')))
 
 # Argument parsing
 parser = argparse.ArgumentParser()
@@ -37,7 +59,7 @@ np.random.seed(seed)
 tf.random.set_seed(seed)
 
 # Settings
-os.environ["CUDA_VISIBLE_DEVICES"] = ""
+# os.environ["CUDA_VISIBLE_DEVICES"] = ""
 
 # Load data
 adj, features, y_train, y_val, y_test, train_mask, val_mask, test_mask, train_size, test_size = load_corpus(

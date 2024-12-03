@@ -1,3 +1,24 @@
+"""
+Graph Construction Module for Text GCN
+
+This script builds a heterogeneous graph from text documents:
+- Constructs document-word edges based on TF-IDF
+- Creates word-word edges based on PMI (Pointwise Mutual Information)
+- Handles document splitting into train/test sets
+- Generates and saves all necessary graph data structures
+- Supports multiple datasets (20ng, R8, R52, ohsumed, mr)
+
+The resulting graph contains:
+- Document nodes
+- Word nodes
+- Weighted edges between documents and words
+- Weighted edges between words based on co-occurrence
+
+Usage:
+    python build_graph.py <dataset>
+where <dataset> is one of: 20ng, R8, R52, ohsumed, mr
+"""
+
 import os
 import random
 import numpy as np
