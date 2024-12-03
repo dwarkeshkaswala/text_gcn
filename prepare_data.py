@@ -2,20 +2,29 @@
 #-*-coding:utf-8-*-
 
 """
-Dataset Preparation Script
+Dataset Preparation Script for Text GCN
 
-This script prepares raw text datasets for Text GCN processing:
-- Downloads and extracts dataset files
-- Organizes into required directory structure
-- Creates train/test splits
-- Generates necessary metadata files
+This script handles the preparation and preprocessing of text datasets for GCN analysis.
+It supports multiple standard datasets and can be extended for custom data.
 
-Supported datasets:
+Key Features:
+- Flexible dataset handling
+- Train/test split generation
+- Metadata creation
+- Corpus organization
+
+Supported Datasets:
 - 20 Newsgroups (20ng)
-- Reuters R8
-- Reuters R52
+- Reuters R8 and R52
 - OHSUMED
 - Movie Reviews (mr)
+- Custom datasets
+
+File Structure Created:
+data/
+├── dataset_name.txt        # Metadata file
+└── corpus/
+    └── dataset_name.txt    # Actual corpus content
 
 Usage:
     python prepare_data.py <dataset>

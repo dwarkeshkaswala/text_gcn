@@ -1,3 +1,26 @@
+"""
+Utility Functions for Text GCN
+
+This module provides essential utility functions for:
+- Data loading and preprocessing
+- Graph construction and manipulation
+- Matrix operations
+- Text cleaning and normalization
+- Evaluation metrics
+
+Key Components:
+- Sparse matrix handling
+- Graph adjacency matrix processing
+- Feature normalization
+- Mask generation for semi-supervised learning
+- Word vector operations
+
+Implementation Notes:
+- Optimized for large sparse matrices
+- Supports both CPU and GPU operations
+- Handles multiple dataset formats
+"""
+
 import numpy as np
 import pickle as pkl
 import networkx as nx
@@ -5,181 +28,124 @@ import scipy.sparse as sp
 from scipy.sparse.linalg import eigsh
 import sys
 import re
-import numpy as np
-sys.modules['numpy._core'] = np.core
 
 def parse_index_file(filename):
-    """Parse index file."""
+    """Parse index file containing document indices.
+    
+    Args:
+        filename (str): Path to index file
+        
+    Returns:
+        list: List of integer indices
+    """
     index = []
     for line in open(filename):
         index.append(int(line.strip()))
     return index
 
-
 def sample_mask(idx, l):
-    """Create mask."""
+    """Create mask array for semi-supervised learning.
+    
+    Args:
+        idx: Indices to mark as True
+        l: Total length of mask
+        
+    Returns:
+        np.array: Boolean mask array
+    """
     mask = np.zeros(l)
+    print("Creating mask...")
+    print("idx:", idx)
+    print("max idx:", np.max(idx))
+    print("mask length:", l)
     mask[idx] = 1
-    return np.array(mask, dtype=np.bool)
-
-
-def load_data(dataset_str):
-    """
-    Loads input data from gcn/data directory
-
-    ind.dataset_str.x => the feature vectors of the training instances as scipy.sparse.csr.csr_matrix object;
-    ind.dataset_str.tx => the feature vectors of the test instances as scipy.sparse.csr.csr_matrix object;
-    ind.dataset_str.allx => the feature vectors of both labeled and unlabeled training instances
-        (a superset of ind.dataset_str.x) as scipy.sparse.csr.csr_matrix object;
-    ind.dataset_str.y => the one-hot labels of the labeled training instances as numpy.ndarray object;
-    ind.dataset_str.ty => the one-hot labels of the test instances as numpy.ndarray object;
-    ind.dataset_str.ally => the labels for instances in ind.dataset_str.allx as numpy.ndarray object;
-    ind.dataset_str.graph => a dict in the format {index: [index_of_neighbor_nodes]} as collections.defaultdict
-        object;
-    ind.dataset_str.test.index => the indices of test instances in graph, for the inductive setting as list object.
-
-    All objects above must be saved using python pickle module.
-
-    :param dataset_str: Dataset name
-    :return: All data input files loaded (as well the training/test data).
-    """
-    names = ['x', 'y', 'tx', 'ty', 'allx', 'ally', 'graph']
-    objects = []
-    for i in range(len(names)):
-        with open("data/ind.{}.{}".format(dataset_str, names[i]), 'rb') as f:
-            if sys.version_info > (3, 0):
-                objects.append(pkl.load(f, encoding='latin1'))
-            else:
-                objects.append(pkl.load(f))
-
-    x, y, tx, ty, allx, ally, graph = tuple(objects)
-    test_idx_reorder = parse_index_file(
-        "data/ind.{}.test.index".format(dataset_str))
-    test_idx_range = np.sort(test_idx_reorder)
-    print(x.shape, y.shape, tx.shape, ty.shape, allx.shape, ally.shape)
-
-    # training nodes are training docs, no initial features
-    # print("x: ", x)
-    # test nodes are training docs, no initial features
-    # print("tx: ", tx)
-    # both labeled and unlabeled training instances are training docs and words
-    # print("allx: ", allx)
-    # training labels are training doc labels
-    # print("y: ", y)
-    # test labels are test doc labels
-    # print("ty: ", ty)
-    # ally are labels for labels for allx, some will not have labels, i.e., all 0
-    # print("ally: \n")
-    # for i in ally:
-    # if(sum(i) == 0):
-    # print(i)
-    # graph edge weight is the word co-occurence or doc word frequency
-    # no need to build map, directly build csr_matrix
-    # print('graph : ', graph)
-
-    if dataset_str == 'citeseer':
-        # Fix citeseer dataset (there are some isolated nodes in the graph)
-        # Find isolated nodes, add them as zero-vecs into the right position
-        test_idx_range_full = range(
-            min(test_idx_reorder), max(test_idx_reorder)+1)
-        tx_extended = sp.lil_matrix((len(test_idx_range_full), x.shape[1]))
-        tx_extended[test_idx_range-min(test_idx_range), :] = tx
-        tx = tx_extended
-        ty_extended = np.zeros((len(test_idx_range_full), y.shape[1]))
-        ty_extended[test_idx_range-min(test_idx_range), :] = ty
-        ty = ty_extended
-
-    features = sp.vstack((allx, tx)).tolil()
-    features[test_idx_reorder, :] = features[test_idx_range, :]
-    adj = nx.adjacency_matrix(nx.from_dict_of_lists(graph))
-
-    labels = np.vstack((ally, ty))
-    labels[test_idx_reorder, :] = labels[test_idx_range, :]
-    # print(len(labels))
-
-    idx_test = test_idx_range.tolist()
-    # print(idx_test)
-    idx_train = range(len(y))
-    idx_val = range(len(y), len(y)+500)
-
-    train_mask = sample_mask(idx_train, labels.shape[0])
-    val_mask = sample_mask(idx_val, labels.shape[0])
-    test_mask = sample_mask(idx_test, labels.shape[0])
-
-    y_train = np.zeros(labels.shape)
-    y_val = np.zeros(labels.shape)
-    y_test = np.zeros(labels.shape)
-    y_train[train_mask, :] = labels[train_mask, :]
-    y_val[val_mask, :] = labels[val_mask, :]
-    y_test[test_mask, :] = labels[test_mask, :]
-
-    return adj, features, y_train, y_val, y_test, train_mask, val_mask, test_mask
-
+    return np.array(mask, dtype=np.bool_)
 
 def load_corpus(dataset_str):
-    """
-    Loads input corpus from gcn/data directory
-
-    ind.dataset_str.x => the feature vectors of the training docs as scipy.sparse.csr.csr_matrix object;
-    ind.dataset_str.tx => the feature vectors of the test docs as scipy.sparse.csr.csr_matrix object;
-    ind.dataset_str.allx => the feature vectors of both labeled and unlabeled training docs/words
-        (a superset of ind.dataset_str.x) as scipy.sparse.csr.csr_matrix object;
-    ind.dataset_str.y => the one-hot labels of the labeled training docs as numpy.ndarray object;
-    ind.dataset_str.ty => the one-hot labels of the test docs as numpy.ndarray object;
-    ind.dataset_str.ally => the labels for instances in ind.dataset_str.allx as numpy.ndarray object;
-    ind.dataset_str.adj => adjacency matrix of word/doc nodes as scipy.sparse.csr.csr_matrix object;
-    ind.dataset_str.train.index => the indices of training docs in original doc list.
-
-    All objects above must be saved using python pickle module.
-
-    :param dataset_str: Dataset name
-    :return: All data input files loaded (as well the training/test data).
+    """Load and preprocess the text corpus and associated data.
+    
+    Loads various components:
+    - Feature matrices (x, tx, allx)
+    - Labels (y, ty, ally)
+    - Adjacency matrix (adj)
+    - Training indices
+    
+    Args:
+        dataset_str (str): Name of the dataset to load
+        
+    Returns:
+        tuple: Contains all necessary data components for the GCN
     """
 
     names = ['x', 'y', 'tx', 'ty', 'allx', 'ally', 'adj']
     objects = []
     for i in range(len(names)):
         with open("data/ind.{}.{}".format(dataset_str, names[i]), 'rb') as f:
-            import sys
-            import numpy as np
-            sys.modules['numpy._core'] = np.core  # Add this line
             objects.append(pkl.load(f, encoding='latin1'))
     x, y, tx, ty, allx, ally, adj = tuple(objects)
-    print(x.shape, y.shape, tx.shape, ty.shape, allx.shape, ally.shape)
+    print("Shapes of loaded data:")
+    print("x.shape:", x.shape)
+    print("y.shape:", y.shape)
+    print("tx.shape:", tx.shape)
+    print("ty.shape:", ty.shape)
+    print("allx.shape:", allx.shape)
+    print("ally.shape:", ally.shape)
 
     features = sp.vstack((allx, tx)).tolil()
     labels = np.vstack((ally, ty))
-    print(len(labels))
+    print("labels.shape:", labels.shape)
 
-    train_idx_orig = parse_index_file(
-        "data/{}.train.index".format(dataset_str))
+    train_idx_orig = parse_index_file("data/{}.train.index".format(dataset_str))
     train_size = len(train_idx_orig)
 
-    val_size = train_size - x.shape[0]
-    test_size = tx.shape[0]
+    val_size = 0  # Adjusted validation size
+    test_size = ty.shape[0]  # Use the number of test labels
 
     idx_train = range(len(y))
     idx_val = range(len(y), len(y) + val_size)
     idx_test = range(allx.shape[0], allx.shape[0] + test_size)
 
+    # Debug prints to check indices
+    print("idx_train:", idx_train)
+    print("max idx_train:", max(idx_train))
+    print("idx_val:", idx_val)
+    print("max idx_val:", max(idx_val) if val_size > 0 else "No validation indices")
+    print("idx_test:", idx_test)
+    print("max idx_test:", max(idx_test))
+    print("labels.shape[0]:", labels.shape[0])
+
+    # Ensure indices are within bounds
+    assert max(idx_train) < labels.shape[0], "idx_train out of bounds"
+    if val_size > 0:
+        assert max(idx_val) < labels.shape[0], "idx_val out of bounds"
+    assert max(idx_test) < labels.shape[0], "idx_test out of bounds"
+
     train_mask = sample_mask(idx_train, labels.shape[0])
-    val_mask = sample_mask(idx_val, labels.shape[0])
+    val_mask = sample_mask(idx_val, labels.shape[0]) if val_size > 0 else np.zeros(labels.shape[0], dtype=bool)
     test_mask = sample_mask(idx_test, labels.shape[0])
 
     y_train = np.zeros(labels.shape)
     y_val = np.zeros(labels.shape)
     y_test = np.zeros(labels.shape)
     y_train[train_mask, :] = labels[train_mask, :]
-    y_val[val_mask, :] = labels[val_mask, :]
+    if val_size > 0:
+        y_val[val_mask, :] = labels[val_mask, :]
     y_test[test_mask, :] = labels[test_mask, :]
 
+    # Symmetrize adjacency matrix
     adj = adj + adj.T.multiply(adj.T > adj) - adj.multiply(adj.T > adj)
 
     return adj, features, y_train, y_val, y_test, train_mask, val_mask, test_mask, train_size, test_size
 
-
 def sparse_to_tuple(sparse_mx):
-    """Convert sparse matrix to tuple representation."""
+    """Convert sparse matrix to tuple representation.
+    
+    Args:
+        sparse_mx: Sparse matrix or list of sparse matrices
+        
+    Returns:
+        tuple or list of tuples: (coords, values, shape)
+    """
     def to_tuple(mx):
         if not sp.isspmatrix_coo(mx):
             mx = mx.tocoo()
@@ -196,16 +162,14 @@ def sparse_to_tuple(sparse_mx):
 
     return sparse_mx
 
-
 def preprocess_features(features):
-    """Row-normalize feature matrix and convert to tuple representation"""
+    """Row-normalize feature matrix and convert to tuple representation."""
     rowsum = np.array(features.sum(1))
     r_inv = np.power(rowsum, -1).flatten()
     r_inv[np.isinf(r_inv)] = 0.
     r_mat_inv = sp.diags(r_inv)
     features = r_mat_inv.dot(features)
     return sparse_to_tuple(features)
-
 
 def normalize_adj(adj):
     """Symmetrically normalize adjacency matrix."""
@@ -216,12 +180,10 @@ def normalize_adj(adj):
     d_mat_inv_sqrt = sp.diags(d_inv_sqrt)
     return adj.dot(d_mat_inv_sqrt).transpose().dot(d_mat_inv_sqrt).tocoo()
 
-
 def preprocess_adj(adj):
-    """Preprocessing of adjacency matrix for simple GCN model and conversion to tuple representation."""
+    """Preprocessing of adjacency matrix for GCN model and conversion to tuple representation."""
     adj_normalized = normalize_adj(adj + sp.eye(adj.shape[0]))
     return sparse_to_tuple(adj_normalized)
-
 
 def construct_feed_dict(features, support, labels, labels_mask, placeholders):
     """Construct feed dictionary."""
@@ -234,9 +196,8 @@ def construct_feed_dict(features, support, labels, labels_mask, placeholders):
     feed_dict.update({placeholders['num_features_nonzero']: features[1].shape})
     return feed_dict
 
-
 def chebyshev_polynomials(adj, k):
-    """Calculate Chebyshev polynomials up to order k. Return a list of sparse matrices (tuple representation)."""
+    """Calculate Chebyshev polynomials up to order k."""
     print("Calculating Chebyshev polynomials up to order {}...".format(k))
 
     adj_normalized = normalize_adj(adj)
@@ -258,31 +219,36 @@ def chebyshev_polynomials(adj, k):
 
     return sparse_to_tuple(t_k)
 
-
 def loadWord2Vec(filename):
     """Read Word Vectors"""
     vocab = []
     embd = []
     word_vector_map = {}
-    file = open(filename, 'r')
-    for line in file.readlines():
-        row = line.strip().split(' ')
-        if(len(row) > 2):
-            vocab.append(row[0])
-            vector = row[1:]
-            length = len(vector)
-            for i in range(length):
-                vector[i] = float(vector[i])
-            embd.append(vector)
-            word_vector_map[row[0]] = vector
+    with open(filename, 'r') as file:
+        for line in file.readlines():
+            row = line.strip().split(' ')
+            if(len(row) > 2):
+                vocab.append(row[0])
+                vector = [float(x) for x in row[1:]]
+                embd.append(vector)
+                word_vector_map[row[0]] = vector
     print('Loaded Word Vectors!')
-    file.close()
     return vocab, embd, word_vector_map
 
 def clean_str(string):
-    """
-    Tokenization/string cleaning for all datasets except for SST.
-    Original taken from https://github.com/yoonkim/CNN_sentence/blob/master/process_data.py
+    """Clean and normalize text string.
+    
+    Performs operations like:
+    - Lowercase conversion
+    - Punctuation standardization
+    - Contraction handling
+    - Whitespace normalization
+    
+    Args:
+        string (str): Input text string
+        
+    Returns:
+        str: Cleaned and normalized string
     """
     string = re.sub(r"[^A-Za-z0-9(),!?\'\`]", " ", string)
     string = re.sub(r"\'s", " \'s", string)

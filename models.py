@@ -7,7 +7,7 @@ This module implements the core model architectures:
 - GCN (Graph Convolutional Network): Main architecture
 
 Features:
-- TensorFlow 2.x implementation
+- TensorFlow 2.10 implementation #for gpu utilization
 - Sparse matrix support
 - Dropout regularization
 - Weight decay
@@ -91,6 +91,7 @@ class GCN(BaseModel):
         self.support = support  # Save the support
         self.dropout_rate = args.dropout
         self.build_model()
+        self.embedding = None  # Initialize the embedding attribute
 
     def build_model(self):
         self.gc1 = GraphConvolution(input_dim=self.input_dim,
@@ -112,6 +113,7 @@ class GCN(BaseModel):
     def call(self, inputs, training=False):
         x = inputs  # Only node features
         x = self.gc1(x, training=training)
+        self.embedding = x  # Store the embeddings after the first layer
         x = self.gc2(x, training=training)
         return x
 

@@ -1,15 +1,65 @@
+"""
+Neural Network Layer Implementations for Text GCN
+
+This module implements specialized layers for Graph Convolutional Networks (GCN):
+
+Core Components:
+1. Base Layer Class
+   - Provides logging functionality
+   - Handles variable management
+   - Implements common layer operations
+
+2. Dense Layer
+   - Supports sparse inputs
+   - Configurable dropout
+   - Flexible activation functions
+   - Weight regularization
+
+3. Graph Convolution Layer
+   - Implements graph convolution operations
+   - Handles adjacency matrix operations
+   - Supports feature aggregation
+   - Configurable for different graph structures
+
+Technical Features:
+- Sparse tensor optimization
+- CPU/GPU compatibility
+- Memory-efficient operations
+- Support for large-scale graphs
+
+Usage Example:
+    gc_layer = GraphConvolution(
+        input_dim=input_dim,
+        output_dim=FLAGS.hidden1,
+        support=support[0],
+        activation=tf.nn.relu,
+        dropout_rate=FLAGS.dropout,
+        sparse_inputs=True
+    )
+"""
+
 from inits import *
 import tensorflow as tf
 
-flags = tf.compat.v1.flags# tf.app.flags
+flags = tf.compat.v1.flags
 FLAGS = flags.FLAGS
 
-# global unique layer ID dictionary for layer name assignment
+# Global unique layer ID dictionary for layer name assignment
 _LAYER_UIDS = {}
 
 
 def get_layer_uid(layer_name=''):
-    """Helper function, assigns unique layer IDs."""
+    """Assigns unique layer IDs for each layer type.
+    
+    This function ensures each layer instance gets a unique identifier,
+    which is useful for variable naming and debugging.
+    
+    Args:
+        layer_name (str): Base name for the layer
+        
+    Returns:
+        int: Unique ID for this layer type
+    """
     if layer_name not in _LAYER_UIDS:
         _LAYER_UIDS[layer_name] = 1
         return 1
@@ -19,7 +69,19 @@ def get_layer_uid(layer_name=''):
 
 
 def sparse_dropout(x, keep_prob, noise_shape):
-    """Dropout for sparse tensors."""
+    """Performs dropout operation on sparse tensors.
+    
+    Efficiently implements dropout for sparse tensors by only dropping
+    non-zero elements.
+    
+    Args:
+        x: Sparse tensor input
+        keep_prob: Probability of keeping each element
+        noise_shape: Shape of the dropout mask
+        
+    Returns:
+        Sparse tensor with dropout applied
+    """
     random_tensor = keep_prob
     random_tensor += tf.compat.v1.random_uniform(noise_shape)
     dropout_mask = tf.cast(tf.floor(random_tensor), dtype=tf.bool)
@@ -28,7 +90,19 @@ def sparse_dropout(x, keep_prob, noise_shape):
 
 
 def dot(x, y, sparse=False):
-    """Wrapper for tf.matmul (sparse vs dense)."""
+    """Performs matrix multiplication handling both sparse and dense inputs.
+    
+    Wrapper function that chooses the appropriate multiplication operation
+    based on input sparsity.
+    
+    Args:
+        x: First input tensor (sparse or dense)
+        y: Second input tensor
+        sparse: Boolean indicating if x is sparse
+        
+    Returns:
+        Result of matrix multiplication
+    """
     if sparse:
         res = tf.compat.v1.sparse_tensor_dense_matmul(x, y)
     else:
@@ -38,15 +112,18 @@ def dot(x, y, sparse=False):
 
 class Layer(object):
     """Base layer class. Defines basic API for all layer objects.
-    Implementation inspired by keras (http://keras.io).
-
-    # Properties
-        name: String, defines the variable scope of the layer.
+    
+    This class provides common functionality for all layers:
+    - Variable management
+    - Logging capabilities
+    - Basic layer operations
+    
+    Properties:
+        name: String, defines the variable scope of the layer
         logging: Boolean, switches Tensorflow histogram logging on/off
-
-    # Methods
+        
+    Methods:
         _call(inputs): Defines computation graph of layer
-            (i.e. takes input, returns output)
         __call__(inputs): Wrapper for _call()
         _log_vars(): Log all variables
     """
@@ -186,7 +263,8 @@ class GraphConvolution(tf.keras.layers.Layer):
             pre_sup = self.kernel
 
         # Multiply with support (adjacency matrix)
-        output = tf.sparse.sparse_dense_matmul(self.support, pre_sup)
+        with tf.device('/CPU:0'):
+            output = tf.sparse.sparse_dense_matmul(self.support, pre_sup)
 
         if self.bias is not None:
             output += self.bias

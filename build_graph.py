@@ -23,532 +23,406 @@ import os
 import random
 import numpy as np
 import pickle as pkl
-import networkx as nx
 import scipy.sparse as sp
 from utils import loadWord2Vec, clean_str
 from math import log
-from sklearn import svm
-from nltk.corpus import wordnet as wn
-from sklearn.feature_extraction.text import TfidfVectorizer
 import sys
-from scipy.spatial.distance import cosine
+import logging
+from collections import defaultdict, Counter
+from datetime import datetime
+from tqdm import tqdm  # For progress bars
 
-if len(sys.argv) != 2:
-	sys.exit("Use: python build_graph.py <dataset>")
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s %(levelname)s:%(message)s',
+    handlers=[
+        logging.StreamHandler()
+    ]
+)
 
-datasets = ['20ng', 'R8', 'R52', 'ohsumed', 'mr']
-# build corpus
-dataset = sys.argv[1]
+logger = logging.getLogger()
 
-if dataset not in datasets:
-	sys.exit("wrong dataset name")
+# Global variables (initialized in main)
+dataset = None
+vocab = None
+word_embeddings_dim = 300  # Assuming word embeddings dimension is 300
+word_vector_map = {}  # Placeholder for word vectors; adjust if using pre-trained embeddings
+word_id_map = {}  # Will be assigned in build_vocabulary
 
-# Read Word Vectors
-# word_vector_file = 'data/glove.6B/glove.6B.300d.txt'
-# word_vector_file = 'data/corpus/' + dataset + '_word_vectors.txt'
-#_, embd, word_vector_map = loadWord2Vec(word_vector_file)
-# word_embeddings_dim = len(embd[0])
 
-word_embeddings_dim = 300
-word_vector_map = {}
+def process_arguments():
+    if len(sys.argv) != 2:
+        sys.exit("Usage: python build_graph.py <dataset>")
 
-# shulffing
-doc_name_list = []
-doc_train_list = []
-doc_test_list = []
+    datasets = ['20ng', 'R8', 'R52', 'ohsumed', 'mr']
+    dataset = sys.argv[1]
 
-f = open('data/' + dataset + '.txt', 'r')
-lines = f.readlines()
-for line in lines:
-    doc_name_list.append(line.strip())
-    temp = line.split("\t")
-    if temp[1].find('test') != -1:
-        doc_test_list.append(line.strip())
-    elif temp[1].find('train') != -1:
-        doc_train_list.append(line.strip())
-f.close()
-# print(doc_train_list)
-# print(doc_test_list)
+    if dataset not in datasets:
+        sys.exit("Wrong dataset name. Available datasets: 20ng, R8, R52, ohsumed, mr")
 
-doc_content_list = []
-f = open('data/corpus/' + dataset + '.clean.txt', 'r')
-lines = f.readlines()
-for line in lines:
-    doc_content_list.append(line.strip())
-f.close()
-# print(doc_content_list)
+    return dataset
 
-train_ids = []
-for train_name in doc_train_list:
-    train_id = doc_name_list.index(train_name)
-    train_ids.append(train_id)
-print(train_ids)
-random.shuffle(train_ids)
 
-# partial labeled data
-#train_ids = train_ids[:int(0.2 * len(train_ids))]
+def load_dataset(dataset):
+    logger.info(f"Loading dataset: {dataset}")
 
-train_ids_str = '\n'.join(str(index) for index in train_ids)
-f = open('data/' + dataset + '.train.index', 'w')
-f.write(train_ids_str)
-f.close()
+    # Read document names and split into train/test
+    doc_name_list = []
+    doc_train_list = []
+    doc_test_list = []
+    with open(f'data/{dataset}.txt', 'r') as f:
+        lines = f.readlines()
+        for line in lines:
+            doc_name_list.append(line.strip())
+            temp = line.strip().split("\t")
+            if 'test' in temp[1]:
+                doc_test_list.append(line.strip())
+            elif 'train' in temp[1]:
+                doc_train_list.append(line.strip())
 
-test_ids = []
-for test_name in doc_test_list:
-    test_id = doc_name_list.index(test_name)
-    test_ids.append(test_id)
-print(test_ids)
-random.shuffle(test_ids)
+    # Read document contents
+    doc_content_list = []
+    with open(f'data/corpus/{dataset}.clean.txt', 'r') as f:
+        lines = f.readlines()
+        for line in lines:
+            doc_content_list.append(line.strip())
 
-test_ids_str = '\n'.join(str(index) for index in test_ids)
-f = open('data/' + dataset + '.test.index', 'w')
-f.write(test_ids_str)
-f.close()
+    return doc_name_list, doc_train_list, doc_test_list, doc_content_list
 
-ids = train_ids + test_ids
-print(ids)
-print(len(ids))
 
-shuffle_doc_name_list = []
-shuffle_doc_words_list = []
-for id in ids:
-    shuffle_doc_name_list.append(doc_name_list[int(id)])
-    shuffle_doc_words_list.append(doc_content_list[int(id)])
-shuffle_doc_name_str = '\n'.join(shuffle_doc_name_list)
-shuffle_doc_words_str = '\n'.join(shuffle_doc_words_list)
+def shuffle_and_split_data(doc_name_list, doc_train_list, doc_test_list, doc_content_list, dataset):
+    logger.info("Shuffling and splitting data into train and test sets.")
 
-f = open('data/' + dataset + '_shuffle.txt', 'w')
-f.write(shuffle_doc_name_str)
-f.close()
+    train_ids = [doc_name_list.index(name) for name in doc_train_list]
+    random.shuffle(train_ids)
 
-f = open('data/corpus/' + dataset + '_shuffle.txt', 'w')
-f.write(shuffle_doc_words_str)
-f.close()
+    # Save train indices
+    with open(f'data/{dataset}.train.index', 'w') as f:
+        f.write('\n'.join(map(str, train_ids)))
 
-# build vocab
-word_freq = {}
-word_set = set()
-for doc_words in shuffle_doc_words_list:
-    words = doc_words.split()
-    for word in words:
-        word_set.add(word)
-        if word in word_freq:
-            word_freq[word] += 1
+    test_ids = [doc_name_list.index(name) for name in doc_test_list]
+    random.shuffle(test_ids)
+
+    # Save test indices
+    with open(f'data/{dataset}.test.index', 'w') as f:
+        f.write('\n'.join(map(str, test_ids)))
+
+    ids = train_ids + test_ids
+    shuffle_doc_name_list = [doc_name_list[i] for i in ids]
+    shuffle_doc_words_list = [doc_content_list[i] for i in ids]
+
+    # Save shuffled document names and contents
+    with open(f'data/{dataset}_shuffle.txt', 'w') as f:
+        f.write('\n'.join(shuffle_doc_name_list))
+
+    with open(f'data/corpus/{dataset}_shuffle.txt', 'w') as f:
+        f.write('\n'.join(shuffle_doc_words_list))
+
+    return shuffle_doc_name_list, shuffle_doc_words_list, train_ids, test_ids
+
+
+def build_vocabulary(shuffle_doc_words_list):
+    logger.info("Building vocabulary.")
+
+    word_freq = {}
+    word_set = set()
+    for doc_words in shuffle_doc_words_list:
+        words = doc_words.split()
+        for word in words:
+            word_set.add(word)
+            word_freq[word] = word_freq.get(word, 0) + 1
+
+    vocab = list(word_set)
+    vocab_size = len(vocab)
+    word_id_map = {word: i for i, word in enumerate(vocab)}
+
+    # Save vocabulary
+    with open(f'data/corpus/{dataset}_vocab.txt', 'w') as f:
+        f.write('\n'.join(vocab))
+
+    return vocab, vocab_size, word_id_map, word_freq
+
+
+def build_word_doc_list(shuffle_doc_words_list):
+    logger.info("Building word-document list.")
+
+    word_doc_list = defaultdict(list)
+    for i, doc_words in enumerate(tqdm(shuffle_doc_words_list, desc="Processing documents")):
+        words = doc_words.split()
+        appeared = set()
+        for word in words:
+            if word not in appeared:
+                word_doc_list[word].append(i)
+                appeared.add(word)
+
+    word_doc_freq = {word: len(doc_ids) for word, doc_ids in word_doc_list.items()}
+
+    return word_doc_list, word_doc_freq
+
+
+def build_label_list(shuffle_doc_name_list):
+    logger.info("Building label list.")
+
+    label_set = set()
+    for doc_meta in shuffle_doc_name_list:
+        temp = doc_meta.split('\t')
+        label_set.add(temp[2])
+    label_list = list(label_set)
+
+    # Save label list
+    with open(f'data/corpus/{dataset}_labels.txt', 'w') as f:
+        f.write('\n'.join(label_list))
+
+    return label_list
+
+
+def compute_document_vectors(shuffle_doc_words_list, indices):
+    logger.info("Computing document vectors.")
+
+    doc_vectors = {}
+    for i in tqdm(indices, desc="Computing document vectors"):
+        doc_words = shuffle_doc_words_list[i]
+        doc_vec = np.zeros(word_embeddings_dim)
+        words = doc_words.split()
+        doc_len = len(words)
+        for word in words:
+            if word in word_vector_map:
+                word_vector = word_vector_map[word]
+                doc_vec += np.array(word_vector)
+        if doc_len > 0:
+            doc_vec /= doc_len
+        doc_vectors[i] = doc_vec
+
+    return doc_vectors
+
+
+def build_feature_matrices(doc_vectors, indices):
+    logger.info("Building feature matrices.")
+
+    data = []
+    rows = []
+    cols = []
+    for idx in tqdm(indices, desc="Building feature matrices"):
+        doc_vec = doc_vectors[idx]
+        for j in range(word_embeddings_dim):
+            data.append(doc_vec[j])
+            rows.append(idx)
+            cols.append(j)
+
+    feature_matrix = sp.csr_matrix((data, (rows, cols)), shape=(max(indices) + 1, word_embeddings_dim))
+
+    return feature_matrix
+
+
+def build_labels(shuffle_doc_name_list, label_list, indices):
+    logger.info("Building label matrices.")
+
+    labels = []
+    for i in tqdm(indices, desc="Building labels"):
+        doc_meta = shuffle_doc_name_list[i]
+        temp = doc_meta.split('\t')
+        label = temp[2]
+        one_hot = [0] * len(label_list)
+        label_index = label_list.index(label)
+        one_hot[label_index] = 1
+        labels.append(one_hot)
+
+    labels = np.array(labels)
+
+    return labels
+
+
+def build_windows(shuffle_doc_words_list, window_size=20):
+    logger.info("Building windows.")
+
+    windows = []
+    for doc_words in tqdm(shuffle_doc_words_list, desc="Processing documents for windows"):
+        words = doc_words.split()
+        length = len(words)
+        if length <= window_size:
+            windows.append(words)
         else:
-            word_freq[word] = 1
+            for j in range(length - window_size + 1):
+                window = words[j: j + window_size]
+                windows.append(window)
+    return windows
 
-vocab = list(word_set)
-vocab_size = len(vocab)
 
-word_doc_list = {}
+def compute_word_window_freq(windows):
+    logger.info("Computing word window frequencies.")
 
-for i in range(len(shuffle_doc_words_list)):
-    doc_words = shuffle_doc_words_list[i]
-    words = doc_words.split()
-    appeared = set()
-    for word in words:
-        if word in appeared:
+    word_window_freq = {}
+    for window in tqdm(windows, desc="Processing windows for word frequencies"):
+        appeared = set()
+        for word in window:
+            if word not in appeared:
+                word_window_freq[word] = word_window_freq.get(word, 0) + 1
+                appeared.add(word)
+    return word_window_freq
+
+
+def compute_word_pair_count(windows):
+    logger.info("Computing word pair counts.")
+
+    word_pair_count = {}
+    for window in tqdm(windows, desc="Processing windows for word pairs"):
+        for i in range(1, len(window)):
+            for j in range(0, i):
+                word_i = window[i]
+                word_j = window[j]
+                if word_i == word_j:
+                    continue
+                word_i_id = word_id_map[word_i]
+                word_j_id = word_id_map[word_j]
+                pair_1 = (word_i_id, word_j_id)
+                pair_2 = (word_j_id, word_i_id)
+                for pair in [pair_1, pair_2]:
+                    word_pair_count[pair] = word_pair_count.get(pair, 0) + 1
+
+    return word_pair_count
+
+
+def build_adjacency_matrix(train_size, vocab_size, test_size, word_pair_count, word_window_freq, word_doc_freq, windows, shuffle_doc_words_list):
+    logger.info("Building adjacency matrix.")
+
+    num_window = len(windows)
+    row = []
+    col = []
+    weight = []
+
+    # PMI between words
+    for (i, j), count in tqdm(word_pair_count.items(), desc="Computing PMI for word pairs"):
+        word_i = vocab[i]
+        word_j = vocab[j]
+        word_freq_i = word_window_freq[word_i]
+        word_freq_j = word_window_freq[word_j]
+        pmi = log((1.0 * count / num_window) /
+                  (1.0 * word_freq_i * word_freq_j / (num_window * num_window)))
+        if pmi <= 0:
             continue
-        if word in word_doc_list:
-            doc_list = word_doc_list[word]
-            doc_list.append(i)
-            word_doc_list[word] = doc_list
-        else:
-            word_doc_list[word] = [i]
-        appeared.add(word)
-
-word_doc_freq = {}
-for word, doc_list in word_doc_list.items():
-    word_doc_freq[word] = len(doc_list)
-
-word_id_map = {}
-for i in range(vocab_size):
-    word_id_map[vocab[i]] = i
-
-vocab_str = '\n'.join(vocab)
-
-f = open('data/corpus/' + dataset + '_vocab.txt', 'w')
-f.write(vocab_str)
-f.close()
-
-'''
-Word definitions begin
-'''
-'''
-definitions = []
-
-for word in vocab:
-    word = word.strip()
-    synsets = wn.synsets(clean_str(word))
-    word_defs = []
-    for synset in synsets:
-        syn_def = synset.definition()
-        word_defs.append(syn_def)
-    word_des = ' '.join(word_defs)
-    if word_des == '':
-        word_des = '<PAD>'
-    definitions.append(word_des)
-
-string = '\n'.join(definitions)
-
-
-f = open('data/corpus/' + dataset + '_vocab_def.txt', 'w')
-f.write(string)
-f.close()
-
-tfidf_vec = TfidfVectorizer(max_features=1000)
-tfidf_matrix = tfidf_vec.fit_transform(definitions)
-tfidf_matrix_array = tfidf_matrix.toarray()
-print(tfidf_matrix_array[0], len(tfidf_matrix_array[0]))
-
-word_vectors = []
-
-for i in range(len(vocab)):
-    word = vocab[i]
-    vector = tfidf_matrix_array[i]
-    str_vector = []
-    for j in range(len(vector)):
-        str_vector.append(str(vector[j]))
-    temp = ' '.join(str_vector)
-    word_vector = word + ' ' + temp
-    word_vectors.append(word_vector)
-
-string = '\n'.join(word_vectors)
-
-f = open('data/corpus/' + dataset + '_word_vectors.txt', 'w')
-f.write(string)
-f.close()
-
-word_vector_file = 'data/corpus/' + dataset + '_word_vectors.txt'
-_, embd, word_vector_map = loadWord2Vec(word_vector_file)
-word_embeddings_dim = len(embd[0])
-'''
-
-'''
-Word definitions end
-'''
-
-# label list
-label_set = set()
-for doc_meta in shuffle_doc_name_list:
-    temp = doc_meta.split('\t')
-    label_set.add(temp[2])
-label_list = list(label_set)
-
-label_list_str = '\n'.join(label_list)
-f = open('data/corpus/' + dataset + '_labels.txt', 'w')
-f.write(label_list_str)
-f.close()
-
-# x: feature vectors of training docs, no initial features
-# slect 90% training set
-train_size = len(train_ids)
-val_size = int(0.1 * train_size)
-real_train_size = train_size - val_size  # - int(0.5 * train_size)
-# different training rates
-
-real_train_doc_names = shuffle_doc_name_list[:real_train_size]
-real_train_doc_names_str = '\n'.join(real_train_doc_names)
-
-f = open('data/' + dataset + '.real_train.name', 'w')
-f.write(real_train_doc_names_str)
-f.close()
-
-row_x = []
-col_x = []
-data_x = []
-for i in range(real_train_size):
-    doc_vec = np.array([0.0 for k in range(word_embeddings_dim)])
-    doc_words = shuffle_doc_words_list[i]
-    words = doc_words.split()
-    doc_len = len(words)
-    for word in words:
-        if word in word_vector_map:
-            word_vector = word_vector_map[word]
-            # print(doc_vec)
-            # print(np.array(word_vector))
-            doc_vec = doc_vec + np.array(word_vector)
-
-    for j in range(word_embeddings_dim):
-        row_x.append(i)
-        col_x.append(j)
-        # np.random.uniform(-0.25, 0.25)
-        data_x.append(doc_vec[j] / doc_len)  # doc_vec[j]/ doc_len
-
-# x = sp.csr_matrix((real_train_size, word_embeddings_dim), dtype=np.float32)
-x = sp.csr_matrix((data_x, (row_x, col_x)), shape=(
-    real_train_size, word_embeddings_dim))
-
-y = []
-for i in range(real_train_size):
-    doc_meta = shuffle_doc_name_list[i]
-    temp = doc_meta.split('\t')
-    label = temp[2]
-    one_hot = [0 for l in range(len(label_list))]
-    label_index = label_list.index(label)
-    one_hot[label_index] = 1
-    y.append(one_hot)
-y = np.array(y)
-print(y)
-
-# tx: feature vectors of test docs, no initial features
-test_size = len(test_ids)
-
-row_tx = []
-col_tx = []
-data_tx = []
-for i in range(test_size):
-    doc_vec = np.array([0.0 for k in range(word_embeddings_dim)])
-    doc_words = shuffle_doc_words_list[i + train_size]
-    words = doc_words.split()
-    doc_len = len(words)
-    for word in words:
-        if word in word_vector_map:
-            word_vector = word_vector_map[word]
-            doc_vec = doc_vec + np.array(word_vector)
-
-    for j in range(word_embeddings_dim):
-        row_tx.append(i)
-        col_tx.append(j)
-        # np.random.uniform(-0.25, 0.25)
-        data_tx.append(doc_vec[j] / doc_len)  # doc_vec[j] / doc_len
-
-# tx = sp.csr_matrix((test_size, word_embeddings_dim), dtype=np.float32)
-tx = sp.csr_matrix((data_tx, (row_tx, col_tx)),
-                   shape=(test_size, word_embeddings_dim))
-
-ty = []
-for i in range(test_size):
-    doc_meta = shuffle_doc_name_list[i + train_size]
-    temp = doc_meta.split('\t')
-    label = temp[2]
-    one_hot = [0 for l in range(len(label_list))]
-    label_index = label_list.index(label)
-    one_hot[label_index] = 1
-    ty.append(one_hot)
-ty = np.array(ty)
-print(ty)
-
-# allx: the the feature vectors of both labeled and unlabeled training instances
-# (a superset of x)
-# unlabeled training instances -> words
-
-word_vectors = np.random.uniform(-0.01, 0.01,
-                                 (vocab_size, word_embeddings_dim))
-
-for i in range(len(vocab)):
-    word = vocab[i]
-    if word in word_vector_map:
-        vector = word_vector_map[word]
-        word_vectors[i] = vector
-
-row_allx = []
-col_allx = []
-data_allx = []
-
-for i in range(train_size):
-    doc_vec = np.array([0.0 for k in range(word_embeddings_dim)])
-    doc_words = shuffle_doc_words_list[i]
-    words = doc_words.split()
-    doc_len = len(words)
-    for word in words:
-        if word in word_vector_map:
-            word_vector = word_vector_map[word]
-            doc_vec = doc_vec + np.array(word_vector)
-
-    for j in range(word_embeddings_dim):
-        row_allx.append(int(i))
-        col_allx.append(j)
-        # np.random.uniform(-0.25, 0.25)
-        data_allx.append(doc_vec[j] / doc_len)  # doc_vec[j]/doc_len
-for i in range(vocab_size):
-    for j in range(word_embeddings_dim):
-        row_allx.append(int(i + train_size))
-        col_allx.append(j)
-        data_allx.append(word_vectors.item((i, j)))
-
-
-row_allx = np.array(row_allx)
-col_allx = np.array(col_allx)
-data_allx = np.array(data_allx)
-
-allx = sp.csr_matrix(
-    (data_allx, (row_allx, col_allx)), shape=(train_size + vocab_size, word_embeddings_dim))
-
-ally = []
-for i in range(train_size):
-    doc_meta = shuffle_doc_name_list[i]
-    temp = doc_meta.split('\t')
-    label = temp[2]
-    one_hot = [0 for l in range(len(label_list))]
-    label_index = label_list.index(label)
-    one_hot[label_index] = 1
-    ally.append(one_hot)
-
-for i in range(vocab_size):
-    one_hot = [0 for l in range(len(label_list))]
-    ally.append(one_hot)
-
-ally = np.array(ally)
-
-print(x.shape, y.shape, tx.shape, ty.shape, allx.shape, ally.shape)
-
-'''
-Doc word heterogeneous graph
-'''
-
-# word co-occurence with context windows
-window_size = 20
-windows = []
-
-for doc_words in shuffle_doc_words_list:
-    words = doc_words.split()
-    length = len(words)
-    if length <= window_size:
-        windows.append(words)
-    else:
-        # print(length, length - window_size + 1)
-        for j in range(length - window_size + 1):
-            window = words[j: j + window_size]
-            windows.append(window)
-            # print(window)
-
-
-word_window_freq = {}
-for window in windows:
-    appeared = set()
-    for i in range(len(window)):
-        if window[i] in appeared:
-            continue
-        if window[i] in word_window_freq:
-            word_window_freq[window[i]] += 1
-        else:
-            word_window_freq[window[i]] = 1
-        appeared.add(window[i])
-
-word_pair_count = {}
-for window in windows:
-    for i in range(1, len(window)):
-        for j in range(0, i):
-            word_i = window[i]
-            word_i_id = word_id_map[word_i]
-            word_j = window[j]
-            word_j_id = word_id_map[word_j]
-            if word_i_id == word_j_id:
-                continue
-            word_pair_str = str(word_i_id) + ',' + str(word_j_id)
-            if word_pair_str in word_pair_count:
-                word_pair_count[word_pair_str] += 1
-            else:
-                word_pair_count[word_pair_str] = 1
-            # two orders
-            word_pair_str = str(word_j_id) + ',' + str(word_i_id)
-            if word_pair_str in word_pair_count:
-                word_pair_count[word_pair_str] += 1
-            else:
-                word_pair_count[word_pair_str] = 1
-
-row = []
-col = []
-weight = []
-
-# pmi as weights
-
-num_window = len(windows)
-
-for key in word_pair_count:
-    temp = key.split(',')
-    i = int(temp[0])
-    j = int(temp[1])
-    count = word_pair_count[key]
-    word_freq_i = word_window_freq[vocab[i]]
-    word_freq_j = word_window_freq[vocab[j]]
-    pmi = log((1.0 * count / num_window) /
-              (1.0 * word_freq_i * word_freq_j/(num_window * num_window)))
-    if pmi <= 0:
-        continue
-    row.append(train_size + i)
-    col.append(train_size + j)
-    weight.append(pmi)
-
-# word vector cosine similarity as weights
-
-'''
-for i in range(vocab_size):
-    for j in range(vocab_size):
-        if vocab[i] in word_vector_map and vocab[j] in word_vector_map:
-            vector_i = np.array(word_vector_map[vocab[i]])
-            vector_j = np.array(word_vector_map[vocab[j]])
-            similarity = 1.0 - cosine(vector_i, vector_j)
-            if similarity > 0.9:
-                print(vocab[i], vocab[j], similarity)
-                row.append(train_size + i)
-                col.append(train_size + j)
-                weight.append(similarity)
-'''
-# doc word frequency
-doc_word_freq = {}
-
-for doc_id in range(len(shuffle_doc_words_list)):
-    doc_words = shuffle_doc_words_list[doc_id]
-    words = doc_words.split()
-    for word in words:
-        word_id = word_id_map[word]
-        doc_word_str = str(doc_id) + ',' + str(word_id)
-        if doc_word_str in doc_word_freq:
-            doc_word_freq[doc_word_str] += 1
-        else:
-            doc_word_freq[doc_word_str] = 1
-
-for i in range(len(shuffle_doc_words_list)):
-    doc_words = shuffle_doc_words_list[i]
-    words = doc_words.split()
-    doc_word_set = set()
-    for word in words:
-        if word in doc_word_set:
-            continue
-        j = word_id_map[word]
-        key = str(i) + ',' + str(j)
-        freq = doc_word_freq[key]
-        if i < train_size:
-            row.append(i)
-        else:
-            row.append(i + vocab_size)
+        row.append(train_size + i)
         col.append(train_size + j)
-        idf = log(1.0 * len(shuffle_doc_words_list) /
-                  word_doc_freq[vocab[j]])
+        weight.append(pmi)
+
+    # Doc-word frequencies
+    logger.info("Computing document-word frequencies.")
+
+    doc_word_freq = {}
+    for doc_id in tqdm(range(len(shuffle_doc_words_list)), desc="Processing documents for doc-word frequencies"):
+        doc_words = shuffle_doc_words_list[doc_id]
+        words = doc_words.split()
+        for word in words:
+            word_id = word_id_map[word]
+            key = (doc_id, word_id)
+            doc_word_freq[key] = doc_word_freq.get(key, 0) + 1
+
+    logger.info("Adding document-word edges to adjacency matrix.")
+
+    for (doc_id, word_id), freq in tqdm(doc_word_freq.items(), desc="Adding edges to adjacency matrix"):
+        if doc_id < train_size:
+            row.append(doc_id)
+        else:
+            row.append(doc_id + vocab_size)
+        col.append(train_size + word_id)
+        idf = log(1.0 * len(shuffle_doc_words_list) / word_doc_freq[vocab[word_id]])
         weight.append(freq * idf)
-        doc_word_set.add(word)
 
-node_size = train_size + vocab_size + test_size
-adj = sp.csr_matrix(
-    (weight, (row, col)), shape=(node_size, node_size))
+    node_size = train_size + vocab_size + test_size
+    adj = sp.csr_matrix((weight, (row, col)), shape=(node_size, node_size))
 
-# dump objects
-f = open("data/ind.{}.x".format(dataset), 'wb')
-pkl.dump(x, f)
-f.close()
+    return adj
 
-f = open("data/ind.{}.y".format(dataset), 'wb')
-pkl.dump(y, f)
-f.close()
 
-f = open("data/ind.{}.tx".format(dataset), 'wb')
-pkl.dump(tx, f)
-f.close()
+def save_objects(x, y, tx, ty, allx, ally, adj, dataset):
+    logger.info("Saving objects.")
 
-f = open("data/ind.{}.ty".format(dataset), 'wb')
-pkl.dump(ty, f)
-f.close()
+    with open(f"data/ind.{dataset}.x", 'wb') as f:
+        pkl.dump(x, f)
 
-f = open("data/ind.{}.allx".format(dataset), 'wb')
-pkl.dump(allx, f)
-f.close()
+    with open(f"data/ind.{dataset}.y", 'wb') as f:
+        pkl.dump(y, f)
 
-f = open("data/ind.{}.ally".format(dataset), 'wb')
-pkl.dump(ally, f)
-f.close()
+    with open(f"data/ind.{dataset}.tx", 'wb') as f:
+        pkl.dump(tx, f)
 
-f = open("data/ind.{}.adj".format(dataset), 'wb')
-pkl.dump(adj, f)
-f.close()
+    with open(f"data/ind.{dataset}.ty", 'wb') as f:
+        pkl.dump(ty, f)
+
+    with open(f"data/ind.{dataset}.allx", 'wb') as f:
+        pkl.dump(allx, f)
+
+    with open(f"data/ind.{dataset}.ally", 'wb') as f:
+        pkl.dump(ally, f)
+
+    with open(f"data/ind.{dataset}.adj", 'wb') as f:
+        pkl.dump(adj, f)
+
+    logger.info("All objects saved successfully.")
+
+
+def main():
+    global dataset, vocab, word_embeddings_dim, word_vector_map, word_id_map
+    dataset = process_arguments()
+    doc_name_list, doc_train_list, doc_test_list, doc_content_list = load_dataset(dataset)
+    shuffle_doc_name_list, shuffle_doc_words_list, train_ids, test_ids = shuffle_and_split_data(
+        doc_name_list, doc_train_list, doc_test_list, doc_content_list, dataset)
+
+    vocab, vocab_size, word_id_map, word_freq = build_vocabulary(shuffle_doc_words_list)
+    # word_id_map is now assigned, and accessible globally
+
+    word_doc_list, word_doc_freq = build_word_doc_list(shuffle_doc_words_list)
+    label_list = build_label_list(shuffle_doc_name_list)
+
+    # Parameters
+    # word_embeddings_dim = 300  # Already defined globally
+    # word_vector_map = {}  # Already defined globally; load your word vectors if available
+
+    train_size = len(train_ids)
+    val_size = int(0.1 * train_size)
+    real_train_size = train_size - val_size
+    test_size = len(test_ids)
+    total_size = len(shuffle_doc_words_list)
+
+    # Compute document vectors for training, test, and allx
+    logger.info("Computing document vectors for training set.")
+    train_indices = list(range(real_train_size))
+    train_doc_vectors = compute_document_vectors(shuffle_doc_words_list, train_indices)
+    x = build_feature_matrices(train_doc_vectors, train_indices)
+    y = build_labels(shuffle_doc_name_list, label_list, train_indices)
+
+    logger.info("Computing document vectors for test set.")
+    test_indices = list(range(train_size, train_size + test_size))
+    test_doc_vectors = compute_document_vectors(shuffle_doc_words_list, test_indices)
+    tx = build_feature_matrices(test_doc_vectors, test_indices)
+    ty = build_labels(shuffle_doc_name_list, label_list, test_indices)
+
+    # Compute allx and ally
+    logger.info("Computing allx and ally.")
+    allx_indices = list(range(train_size + vocab_size))
+    # Combine train_doc_vectors and word_vectors
+    all_doc_vectors = train_doc_vectors.copy()
+    for i in tqdm(range(vocab_size), desc="Processing vocabulary for allx"):
+        idx = train_size + i
+        word = vocab[i]
+        all_doc_vectors[idx] = np.random.uniform(-0.01, 0.01, word_embeddings_dim)
+        if word in word_vector_map:
+            all_doc_vectors[idx] = word_vector_map[word]
+    allx = build_feature_matrices(all_doc_vectors, list(all_doc_vectors.keys()))
+    ally_labels = build_labels(shuffle_doc_name_list, label_list, list(range(train_size)))
+    ally = np.vstack([ally_labels, np.zeros((vocab_size, len(label_list)))])
+
+    # Build windows for PMI calculation
+    windows = build_windows(shuffle_doc_words_list)
+    word_window_freq = compute_word_window_freq(windows)
+    word_pair_count = compute_word_pair_count(windows)
+
+    # Build adjacency matrix
+    adj = build_adjacency_matrix(train_size, vocab_size, test_size, word_pair_count, word_window_freq, word_doc_freq, windows, shuffle_doc_words_list)
+
+    # Save all objects
+    save_objects(x, y, tx, ty, allx, ally, adj, dataset)
+
+
+if __name__ == '__main__':
+    main()

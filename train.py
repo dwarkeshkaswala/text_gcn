@@ -19,27 +19,33 @@ Features:
 Usage:
     python train.py <dataset> [--model gcn|mlp] [--other_args]
 """
-
-import time
+import os
+os.environ["CUDA_VISIBLE_DEVICES"] = ""
 import tensorflow as tf
+import time
 from sklearn import metrics
 from utils import *
 from models import GCN, MLP
 import random
-import os
 import sys
 import numpy as np
 import argparse
+import multiprocessing
 
-tf.debugging.set_log_device_placement(True)
-print("Num GPUs Available: ", len(tf.config.list_physical_devices('GPU')))
+# tf.debugging.set_log_device_placement(True)
+# print("Num GPUs Available: ", len(tf.config.list_physical_devices('GPU')))
+
+num_cores = multiprocessing.cpu_count()
+print(f"Number of CPU cores: {num_cores}")
+
+
 
 # Argument parsing
 parser = argparse.ArgumentParser()
 parser.add_argument('dataset', help='Dataset string.')
 parser.add_argument('--model', default='gcn', help='Model string: gcn, gcn_cheby, dense.')
 parser.add_argument('--learning_rate', type=float, default=0.02, help='Initial learning rate.')
-parser.add_argument('--epochs', type=int, default=200, help='Number of epochs to train.')
+parser.add_argument('--epochs', type=int, default=5, help='Number of epochs to train.')
 parser.add_argument('--hidden1', type=int, default=200, help='Number of units in hidden layer 1.')
 parser.add_argument('--dropout', type=float, default=0.5, help='Dropout rate (1 - keep probability).')
 parser.add_argument('--weight_decay', type=float, default=0.0, help='Weight for L2 loss on embedding matrix.')
@@ -59,7 +65,15 @@ np.random.seed(seed)
 tf.random.set_seed(seed)
 
 # Settings
-# os.environ["CUDA_VISIBLE_DEVICES"] = ""
+
+
+# Set threading options
+tf.config.threading.set_intra_op_parallelism_threads(num_cores)
+tf.config.threading.set_inter_op_parallelism_threads(num_cores)
+
+# Set environment variables for OpenMP and MKL (optional)
+os.environ["OMP_NUM_THREADS"] = str(num_cores)
+os.environ["MKL_NUM_THREADS"] = str(num_cores)
 
 # Load data
 adj, features, y_train, y_val, y_test, train_mask, val_mask, test_mask, train_size, test_size = load_corpus(
@@ -198,6 +212,7 @@ print("Micro average Test Precision, Recall and F1-Score...")
 print(metrics.precision_recall_fscore_support(test_labels, test_pred, average='micro'))
 
 # Extract embeddings
+logits = model(features, training=False)
 embeddings = model.embedding.numpy()
 
 # Split embeddings
